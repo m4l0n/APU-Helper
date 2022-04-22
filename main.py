@@ -29,7 +29,8 @@ API_KEY = os.environ['API_KEY']
 USER_ID = os.environ['USER_ID']
 
 PREFIX  = "!"
-# Initialise Discord Bot
+LOGS_CHANNEL = 0 # Channel ID where you want to send logs to : int
+REMINDER_CHANNEL = 0 # Channel ID where you want the class reminders to be sent to : int
 client = commands.Bot(command_prefix=PREFIX)
 days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
 
@@ -270,7 +271,7 @@ async def send_reminder(module_name, day_name, time, duration):
   time: str
   duration: str
   """
-  channel = client.get_channel(870189007911399497)
+  channel = client.get_channel(REMINDER_CHANNEL)
   embed = discord.Embed(title="Class Reminder", color=0x1ed760)
   embed.set_author(name=client.user.display_name, icon_url=client.user.avatar_url)
   embed.add_field(name="Class Name", value=module_name, inline=False)
@@ -285,7 +286,7 @@ async def scheduler_logs():
   """
   Sends a log for all jobs in scheduler.
   """
-  channel = client.get_channel(966521544442544180)
+  channel = client.get_channel(LOGS_CHANNEL)
   await channel.purge()
   i = 1
   for job in scheduler.get_jobs():
