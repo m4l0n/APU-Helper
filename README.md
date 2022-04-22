@@ -1,5 +1,5 @@
 # APU-Helper
-A Discord-based bot to provide utilities for university purposes.
+A Discord-based bot to provide utilities for university purposes. (Asia Pacific University)
 
 ## Installing requirements
 
