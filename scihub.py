@@ -25,13 +25,12 @@ class SciHub():
       link = soup.find_all('iframe')
       if not link:
           link = soup.find_all("embed", type="application/pdf")
-      unparsed_title = soup.find("div", id = "citation", onclick = "clip(this)")      # Get title of Journal
-      title_pattern = re.compile(r'(<i>)([a-zA-Z0-9\s.-:-]+)([.])')
-      unformatted_title = title_pattern.search(str(unparsed_title)).group(2)
-      if not unformatted_title:
+      # Get title of Journal
+      title = soup.find("div", id = "citation", onclick = "clip(this)").contents[1].text.rstrip()
+      if not title:
           fname = self.fix_string(self.doi) + ".pdf"
       else:
-          fname = self.fix_string(unformatted_title) + ".pdf"
+          fname = self.fix_string(title) + ".pdf"
       pdf = sess.get(link[0]['src'], headers = headers) 
       return io.BytesIO(pdf.content), fname
     # Journal article not available in Sci Hub database
@@ -42,3 +41,8 @@ class SciHub():
   def fix_string(self, string):
     special_char = re.compile(r'[~#%&*{}\\:<>?/+=|]')
     return re.sub(special_char, "_", string)
+
+
+if __name__ == "__main__":
+  scihub = SciHub("10.1016/S0950-5849(97)00053-0")
+  print(scihub.search_sci_hub())
