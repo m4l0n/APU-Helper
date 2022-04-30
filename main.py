@@ -243,21 +243,49 @@ def schedule_timetable():
   """
   scheduler = AsyncIOScheduler()
   schedule_dict = {day:{} for day in days}
-  with open('calendar.ics', 'r') as fileHandler:
-    gcal = Calendar(fileHandler.read())
-    for component in gcal.events:
-      module_name = component.name
-      dtstart = component.begin # Arrow object
-      dtend = component.end
-      duration = dtstart.humanize(dtend, only_distance = True)  # Gets range between dtstart and dtend
-      day_name = (dtstart.format('dddd', locale = 'en_GB')).lower()  # Gets day of the week from date
-      schedule_dict[day_name][module_name] = [dtstart.time().strftime("%I:%M %p"), dtend.time().strftime("%I:%M %p"), duration]
-      exec(f'scheduler.add_job(send_reminder, "cron", day_of_week="{day_name[0:3]}", hour={dtstart.strftime("%-H")}, minute={dtstart.strftime("%-M")}, timezone="Asia/Kuala_Lumpur",'
-           f'args=("{module_name}", "{day_name}", "{dtstart.strftime("%I:%M %p")}", "{duration}"))')
-  with open('schedule.json', 'w', encoding='utf-8') as f:
-    json.dump(schedule_dict, f, ensure_ascii=False, indent=4)
+  try:
+    with open('calendar.ics', 'r') as fileHandler:
+      gcal = Calendar(fileHandler.read())
+      for component in gcal.events:
+        module_name = component.name
+        dtstart = component.begin # Arrow object
+        dtend = component.end
+        duration = dtstart.humanize(dtend, only_distance = True)  # Gets range between dtstart and dtend
+        day_name = (dtstart.format('dddd', locale = 'en_GB')).lower()  # Gets day of the week from date
+        schedule_dict[day_name][module_name] = [dtstart.time().strftime("%I:%M %p"), dtend.time().strftime("%I:%M %p"), duration]
+        exec(f'scheduler.add_job(send_reminder, "cron", day_of_week="{day_name[0:3]}", hour={dtstart.strftime("%-H")}, minute={dtstart.strftime("%-M")}, timezone="Asia/Kuala_Lumpur",'
+             f'args=("{module_name}", "{day_name}", "{dtstart.strftime("%I:%M %p")}", "{duration}"))')
+    with open('schedule.json', 'w', encoding='utf-8') as f:
+      json.dump(schedule_dict, f, ensure_ascii=False, indent=4)
+    return scheduler
+  except FileNotFoundError as e:
+    print("Calendar.ics file not found! Can't parse timetable.")
+    sys.exit(1)
+  # Exceptions from ics.py
+  except (ValueError, NotImplementedError) as ve:
+    print(str(ve))
+    sys.exit(1)
 
-  return scheduler
+
+def initialise_o365():
+  try:
+    scopes = [
+      "Calendars.Read",
+      "Calendars.Read.Shared",
+      "Channel.ReadBasic.All",
+      "IMAP.AccessAsUser.All",
+      "openid profile",
+      "Team.ReadBasic.All",
+      "User.Read email"
+    ]
+    account = o365.Account(scopes = scopes)
+    return account
+  except ValueError as ve:
+    print(str(ve))
+    sys.exit(1)
+  except (o365.TokenExpiredError, o365.TokenInvalidError) as te:
+    print(te.message)
+    sys.exit(1)
 
 
 async def send_reminder(module_name, day_name, time, duration):
@@ -271,15 +299,21 @@ async def send_reminder(module_name, day_name, time, duration):
   time: str
   duration: str
   """
-  channel = client.get_channel(REMINDER_CHANNEL)
-  embed = discord.Embed(title="Class Reminder", color=0x1ed760)
-  embed.set_author(name=client.user.display_name, icon_url=client.user.avatar_url)
-  embed.add_field(name="Class Name", value=module_name, inline=False)
-  embed.add_field(name="Time", value=f'{day_name.title()}, {time}', inline=True)
-  embed.add_field(name="Duration", value=duration, inline=True)
+  try:
+    meeting_link = account.two_hour_schedule()
+    channel = client.get_channel(870189007911399497)
+    embed = discord.Embed(title="Class Reminder", color=0x1ed760)
+    embed.set_author(name=client.user.display_name, icon_url=client.user.avatar_url)
+    embed.add_field(name="Class Name", value=module_name, inline=False)
+    embed.add_field(name="Time", value=f'{day_name.title()}, {time}', inline=True)
+    embed.add_field(name="Duration", value=duration, inline=True)
+    embed.add_field(name="Meeting link", value=meeting_link, inline = False)
 
-  await channel.send(f'<@{USER_ID}>')
-  await channel.send(embed=embed)
+    await channel.send(f'<@{USER_ID}>')
+    await channel.send(embed=embed)
+  except o365.TokenInvalidError as e:
+    print(e.message)
+    sys.exit(1)
 
 
 async def scheduler_logs():
@@ -310,6 +344,7 @@ async def on_ready():
 
 
 if __name__ == "__main__":
+    account = initialise_o365()
   scheduler = schedule_timetable()
   scheduler.start()
   client.run(TOKEN)
