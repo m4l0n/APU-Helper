@@ -18,6 +18,7 @@ A Discord-based bot to provide utilities for university purposes. (Asia Pacific 
   - str:APSpace Password
   - str:APSpace API KEY
   - int:Discord User ID
+  - str:Webhook URL for logging
 
 ```EXPORT $VAR = VALUE```
 
