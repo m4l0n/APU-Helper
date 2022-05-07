@@ -1,6 +1,8 @@
 # APU-Helper
 A Discord-based bot to provide utilities for university purposes. (Asia Pacific University)
 
+<br/>
+
 ## Installing requirements
 
 ### CLI
@@ -48,3 +50,15 @@ See [Additional Requirements](#Additional-Requirements)
 
 Example:
 ```!doi 10.1145/3147.3165```
+
+<br/>
+
+### 4. Assignment Reminders
+
+Automatically parse assignment events from Moodle and send reminders in the form of Embeds to your desired channel.
+
+<br/>
+
+## Misc
+
+The bot will send logs to your desired channel for debugging purposes.
