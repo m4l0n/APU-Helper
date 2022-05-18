@@ -1,7 +1,11 @@
-import requests
+import json
 import re
 from datetime import datetime
 import logging
+import aiohttp
+import aiohttp.web
+import asyncio
+from bs4 import BeautifulSoup, SoupStrainer
 
 
 logger = logging.getLogger(__name__)
@@ -38,10 +42,15 @@ class CredentialsInvalid(Exception):
         return self.message
 
 
+class Submission:
+    context_id: str
+    item_id: str
+    client_id: str
+
+
 class Moodle:
-    def __init__(self, credentials):
-        self.credentials = credentials
-        self.lms_url = "https://lms2.apiit.edu.my/lib/ajax/service.php"
+    def __init__(self):
+        self.lms_url = "https://lms2.apiit.edu.my/"
         self.headers = {
             'sec-ch-ua': '\" Not A;Brand\";v=\"99\", \"Chromium\";v=\"101\", \"Microsoft Edge\";v=\"101\"',
             'sec-ch-ua-mobile': '?0',
@@ -59,17 +68,23 @@ class Moodle:
             'Accept-Encoding': 'gzip, deflate, br',
             'Accept-Language': 'en-US,en;q=0.9,zh-CN;q=0.8,zh-TW;q=0.7,zh;q=0.6'
         }
-        self.sess_key, self.session = self.login()
+        self.sess_key = None
+        self.user_id = None
+        self.session = aiohttp.ClientSession()
 
-    def url_builder(self, core):
-        return f'{self.lms_url}?sesskey={self.sess_key}&info={core}'
+    def lms_url_builder(self, service_path, query):
+        query_string = []
+        for key in query.keys():
+            query_string.append(
+                f'{key}={query[key]}'
+            )
+        return f'{self.lms_url}{service_path}?{"&".join(query_string)}'
 
-    def login(self):
+    async def login(self, credentials):
         login_url = "https://cas.apiit.edu.my/cas/login"
-        session = requests.session()
         payload = {
-            'username': self.credentials['username'],
-            'password': self.credentials['password'],
+            'username': credentials['username'],
+            'password': credentials['password'],
             'rememberMe': 'true',
             'execution': '2907bd9b-7941-4cf6-8b21-825f1f1a2a05_ZXlKaGJHY2lPaUpJVXpVeE1pSjkuai94V1VPVkl3L2IxZkVXcmIrdlhs'
                          'Yk1Tc0ZxRkxWc0lSMnQzZWhWK0N2SEZDUGZYOS9LbzhLM1pqVml4WlRZRVIyQk1hVUYycitmUnNMK05oL1NpZmhpZzgzV'
@@ -93,20 +108,23 @@ class Moodle:
             '_eventId': 'submit',
             'geolocation': ''
         }
-        response = session.post(login_url, headers = self.headers, data = payload)
-        if response.status_code == '200' or 200:
+        response = await self.session.post(login_url, data = payload, headers = self.headers)
+        if response.status == 200:
             logger.info("Logged in to Moodle!")
-            sess_key = re.search(r'sesskey":"(.*?)"', response.text).group(1)
-            return sess_key, session
-        elif response.status_code == '400' or 400:
+            self.sess_key = re.search(r'sesskey":"(.*?)"', await response.text()).group(1)
+        elif response.status == 400:
             logger.critical("400 Bad Request: Malformed request!")
-        elif response.status_code == '401' or 401:
+        elif response.status == 401:
             # Must catch this error
             logger.error("Moodle credentials invalid!")
             raise CredentialsInvalid
 
-    def get_events(self):
-        url = self.url_builder("core_calendar_get_action_events_by_timesort")
+    async def get_events(self):
+        url = self.lms_url_builder("lib/ajax/service.php",
+                                   {
+                                       'sesskey': self.sess_key,
+                                       'core': "core_calendar_get_action_events_by_timesort"
+                                   })
         payload = [
             {
                 "index": 0,
@@ -119,15 +137,131 @@ class Moodle:
             }
         ]
 
-        events = self.session.post(url, json = payload, headers = self.headers).json()
+        response = await self.session.post(url, json = payload, headers = self.headers)
+        events = await response.json()
         if not events[0]['error']:
             logger.debug("Request for events successful!")
             return events[0]['data']['events']
         else:
             # Must catch this exception
             logger.error("HTTP Error")
-            raise requests.HTTPError(events[0]['exception']['message'])
+            raise aiohttp.web.HTTPError(reason = "Something went wrong", text = events[0]['exception']['message'])
+
+    async def check_plagiarism(self, file_content, file_name):
+        pre_check = await self.edit_submission()
+        if pre_check is None:
+            return
+        file_id = await self.upload_file(file_content, file_name, pre_check)
+        payload = {
+            'lastmodified': datetime.now().timestamp(),
+            'id': '113679',
+            'userid': self.user_id,
+            'action': 'savesubmission',
+            'sesskey': self.sess_key,
+            '_qf__mod_assign_submission_form': '1',
+            'submissionstatement': '1',
+            'files_filemanager': file_id,
+            'submitbutton': 'Save changes'
+        }
+        logger.info("Attemping submission...")
+        url = self.lms_url_builder('mod/assign/view.php', {})
+        response = await self.session.post(url, data = payload, allow_redirects = False)
+        check_url = response.headers['Location']
+        while True:
+            logger.info("Waiting for 2 minutes before checking plagiarism...")
+            await asyncio.sleep(120)
+            response = await self.session.get(check_url)
+            response_html = await response.text()
+            soup = BeautifulSoup(response_html, "lxml", parse_only = SoupStrainer('td', {'class': 'cell c1 lastcol'}))
+            result = soup.find('div', {'class': 'tii_tooltip origreport_score score_colour score_colour_90'})
+            if result is not None:
+                return result.contents[0]
+
+    async def upload_file(self, file_content, file_name, submission_info):
+        multipart_data = {
+            'sesskey': self.sess_key,
+            'repo_id': '4',
+            'itemid': submission_info.item_id,
+            'author': 'ANG RU XIAN .',
+            'savepath': '/',
+            'title': file_name,
+            'overwrite': '1',
+            'ctx_id': submission_info.context_id
+        }
+        payload = aiohttp.FormData()
+        for key, value in multipart_data.items():
+            payload.add_field(key, value)
+        payload.add_field(name = 'repo_upload_file', value = file_content, filename = file_name,
+                          content_type = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+        response = await self.session.post('https://lms2.apiit.edu.my/repository/repository_ajax.php?action=upload',
+                                           data = payload)
+        response_json = json.loads(await response.text())
+        return response_json['id']
+
+    async def edit_submission(self):
+        url = self.lms_url_builder("mod/assign/view.php",
+                                   {
+                                       'id': '113679',
+                                       'action': 'editsubmission'
+                                   })
+        response = await self.session.get(url)
+        logger.info("Getting submission info...")
+        response_text = await response.text()
+        submission_info = Submission()
+        submission_info.context_id = re.search(r'contextid":(.*?),', response_text).group(1)
+        submission_info.item_id = re.search(r'itemid":(.*?),', response_text).group(1)
+        filecount = int(re.search(r'filecount":(.*?),', response_text).group(1))
+        submission_info.client_id = re.search(r'client_id":"(.*?)"', response_text).group(1)
+        soup = BeautifulSoup(response_text, "lxml")
+        self.user_id = soup.find("input", type = "hidden", attrs = {"name": "userid"}).get("value")
+        if filecount > 0:
+            logger.info("There are existing files in the repo! Removing them before new submission...")
+            await self.remove_submission(113679)
+            logger.info("Existing submission removed!")
+        if (submission_info.context_id and submission_info.item_id and submission_info.client_id and self.user_id):
+            logger.info("Submission info parsing complete!")
+            return submission_info
+        return None
+
+    async def remove_submission(self, page_id):
+        url = self.lms_url_builder("mod/assign/view.php", {})
+        check_url = self.lms_url_builder("mod/assign/view.php",
+                                         {
+                                             'id': page_id,
+                                             'action': 'view'
+                                         })
+
+        payload = {
+            'id': page_id,
+            'action': 'removesubmission',
+            'userid': self.user_id,
+            'sesskey': self.sess_key
+        }
+        response = await self.session.post(url, data = payload, allow_redirects = False)
+        if response.headers['Location'] == check_url:
+            return True
+        return False
+        
+
+async def main():
+    try:
+        moodle_session = Moodle()
+        await moodle_session.login({'username': 'TP062253', 'password': '2TRY!vK6JTCF'})
+        print(await moodle_session.get_events())
+        # with open('Part B.docx', 'rb') as f:
+        #     print(await moodle_session.check_plagiarism(f, 'Part B.docx'))
+    except Exception as e:
+        logging.exception(e)
+    finally:
+        await moodle_session.session.close()
 
 
 if __name__ == "__main__":
-    pass
+    formatter = logging.Formatter('%(asctime)s : %(name)s : %(levelname)s : %(message)s',
+                                  datefmt = '%m/%d/%Y %I:%M:%S %p')
+    stream_logger = logging.StreamHandler()
+    stream_logger.setFormatter(formatter)
+    logger.addHandler(stream_logger)
+    logger.setLevel(level = logging.DEBUG)
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    asyncio.run(main())
