@@ -173,7 +173,7 @@ class Moodle:
             response = await self.session.get(check_url)
             response_html = await response.text()
             soup = BeautifulSoup(response_html, "lxml", parse_only = SoupStrainer('td', {'class': 'cell c1 lastcol'}))
-            result = soup.find('div', {'class': 'tii_tooltip origreport_score score_colour score_colour_90'})
+            result = soup.find('div', {'class': 'tii_links_container'}).findAll('div', recursive = True)[1].getText()
             if result is not None:
                 return result.contents[0]
 
