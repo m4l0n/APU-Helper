@@ -175,7 +175,7 @@ class Moodle:
             soup = BeautifulSoup(response_html, "lxml", parse_only = SoupStrainer('td', {'class': 'cell c1 lastcol'}))
             result = soup.find('div', {'class': 'tii_links_container'}).findAll('div', recursive = True)[1].getText()
             if result is not None:
-                return result.contents[0]
+                return result
 
     async def upload_file(self, file_content, file_name, submission_info):
         multipart_data = {
@@ -216,9 +216,8 @@ class Moodle:
         self.user_id = soup.find("input", type = "hidden", attrs = {"name": "userid"}).get("value")
         if filecount > 0:
             logger.info("There are existing files in the repo! Removing them before new submission...")
-            await self.remove_submission(113679)
-            logger.info("Existing submission removed!")
-        if (submission_info.context_id and submission_info.item_id and submission_info.client_id and self.user_id):
+            return await self.remove_submission(113679)
+        elif (submission_info.context_id and submission_info.item_id and submission_info.client_id and self.user_id):
             logger.info("Submission info parsing complete!")
             return submission_info
         return None
@@ -239,7 +238,8 @@ class Moodle:
         }
         response = await self.session.post(url, data = payload, allow_redirects = False)
         if response.headers['Location'] == check_url:
-            return True
+            logger.info("Existing submission removed!")
+            return await self.edit_submission()
         return False
         
 
@@ -247,7 +247,9 @@ async def main():
     try:
         moodle_session = Moodle()
         await moodle_session.login({'username': 'TP062253', 'password': '2TRY!vK6JTCF'})
-        print(await moodle_session.get_events())
+        with open('1.pdf', 'rb') as f:
+            text = f.read()
+        print(await moodle_session.check_plagiarism(text, '1.pdf'))
         # with open('Part B.docx', 'rb') as f:
         #     print(await moodle_session.check_plagiarism(f, 'Part B.docx'))
     except Exception as e:
